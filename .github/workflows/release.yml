@@ -18,12 +18,13 @@ jobs:
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ env.TAG }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          # Current Go: older toolchains produce macOS binaries that new macOS refuses to load.
+          go-version: stable
       - name: Test
         run: |
           go vet ./...

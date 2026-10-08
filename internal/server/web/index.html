@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BetterDecompiler</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5d6673; --border: #d9dde3;
+  --accent: #2f6fed; --accent-text: #ffffff; --warn: #9a6200; --err: #c62828; --code: #fbfbfc;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216; --panel: #171b21; --text: #e6e9ee; --muted: #98a2b1; --border: #2a313a;
+    --accent: #5b8dff; --accent-text: #0b0d10; --warn: #e0a440; --err: #ff6b6b; --code: #12161b;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0 8px 0 0; font-weight: 650; }
+header .ver { color: var(--muted); font-size: 12px; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-left: auto; }
+label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
+select, input { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); min-width: 0; }
+input.model { width: 170px; }
+button { font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button:disabled { opacity: .6; cursor: progress; }
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 16px; height: calc(100vh - 110px); min-height: 360px; }
+.pane { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; min-height: 0; }
+.pane .bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); gap: 8px; }
+textarea { flex: 1; border: 0; resize: none; padding: 10px; background: var(--code); color: var(--text); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; border-radius: 0 0 8px 8px; tab-size: 4; white-space: pre; }
+textarea:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+footer { padding: 0 16px 10px; font-size: 12px; color: var(--muted); min-height: 22px; }
+footer .warn { color: var(--warn); } footer .err { color: var(--err); }
+.small { padding: 3px 8px; font-size: 12px; font-weight: 500; }
+@media (max-width: 760px) { main { grid-template-columns: 1fr; height: auto; } textarea { min-height: 300px; } .controls { margin-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>BetterDecompiler</h1><span class="ver" id="ver"></span>
+  <div class="controls">
+    <label>Provider<select id="provider"></select></label>
+    <label>Model<input id="model" class="model" placeholder="default"></label>
+    <label>Mode<select id="mode">
+      <option value="">default</option><option value="rename">rename (fast, safe)</option>
+      <option value="rewrite">rewrite (AI rewrites code)</option><option value="offline">offline (no AI)</option>
+    </select></label>
+    <label>Comments<select id="comments"><option value="">default</option><option>none</option><option>light</option><option>detailed</option></select></label>
+    <label id="tokenWrap" hidden>Token<input id="token" type="password" style="width:120px"></label>
+    <button class="primary" id="go" title="Ctrl+Enter">Clean</button>
+  </div>
+</header>
+<main>
+  <section class="pane">
+    <div class="bar"><span>Decompiled input</span><button class="small" id="sample">Load sample</button></div>
+    <textarea id="input" spellcheck="false" placeholder="Paste decompiled Luau here, then press Clean (Ctrl+Enter)."></textarea>
+  </section>
+  <section class="pane">
+    <div class="bar"><span id="outLabel">Cleaned output</span><span><button class="small" id="copy">Copy</button> <button class="small" id="download">Download</button></span></div>
+    <textarea id="output" spellcheck="false" readonly></textarea>
+  </section>
+</main>
+<footer id="status"></footer>
+<script>
+const $ = (id) => document.getElementById(id);
+const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+for (const id of ["provider", "model", "mode", "comments", "token"]) {
+  $(id).addEventListener("change", () => store.set("bd." + id, $(id).value));
+}
+function headers() {
+  const h = { "Content-Type": "application/json" };
+  if ($("token").value) h["Authorization"] = "Bearer " + $("token").value;
+  return h;
+}
+function status(text, cls) { const s = $("status"); s.textContent = text; s.className = cls || ""; }
+
+async function init() {
+  $("token").value = store.get("bd.token");
+  try {
+    const health = await (await fetch("/v1/health")).json();
+    $("ver").textContent = health.version;
+    $("tokenWrap").hidden = !health.auth;
+    const res = await fetch("/v1/providers", { headers: headers() });
+    const data = await res.json();
+    const sel = $("provider");
+    sel.innerHTML = "";
+    const def = document.createElement("option");
+    def.value = ""; def.textContent = "default (" + (data.chain || []).join(" → ") + ")";
+    sel.append(def);
+    for (const p of data.providers || []) {
+      const o = document.createElement("option");
+      o.value = p.name; o.textContent = p.name + " · " + p.model;
+      sel.append(o);
+    }
+    const off = document.createElement("option");
+    off.value = "offline"; off.textContent = "offline · no AI";
+    sel.append(off);
+    for (const id of ["provider", "model", "mode", "comments"]) { const v = store.get("bd." + id); if (v) $(id).value = v; }
+    status(res.ok ? "Ready." : (data.error || "Could not list providers"), res.ok ? "" : "err");
+  } catch (e) { status("Server unreachable: " + e, "err"); }
+}
+
+async function clean() {
+  const src = $("input").value;
+  if (!src.trim()) { status("Paste some decompiled code first.", "warn"); return; }
+  $("go").disabled = true;
+  status("Cleaning…");
+  const body = { source: src };
+  for (const id of ["provider", "model", "mode", "comments"]) if ($(id).value) body[id] = $(id).value;
+  try {
+    const res = await fetch("/v1/clean", { method: "POST", headers: headers(), body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) { status(data.error || ("HTTP " + res.status), "err"); return; }
+    $("output").value = data.source;
+    const u = data.usage || {};
+    const tokens = (u.input_tokens || u.output_tokens) ? ` · ${u.input_tokens} in / ${u.output_tokens} out tokens` : "";
+    $("outLabel").textContent = `Cleaned output · ${data.provider}${data.model ? "/" + data.model : ""} · ${data.mode}`;
+    const parts = [`Done in ${(data.elapsed_ms / 1000).toFixed(2)}s${data.cached ? " (cached)" : ""}`,
+                   `${data.renamed} names recovered`, `${data.comments} comments`];
+    status(parts.join(" · ") + tokens + ((data.warnings || []).length ? " · ⚠ " + data.warnings.join(" | ") : ""),
+           (data.warnings || []).length ? "warn" : "");
+  } catch (e) { status("Request failed: " + e, "err"); }
+  finally { $("go").disabled = false; }
+}
+
+$("go").addEventListener("click", clean);
+document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") clean(); });
+$("token").addEventListener("change", init);
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("output").value); status("Copied."); }
+  catch { $("output").select(); document.execCommand("copy"); status("Copied."); }
+});
+$("download").addEventListener("click", () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([$("output").value], { type: "text/plain" }));
+  a.download = "cleaned.lua"; a.click(); URL.revokeObjectURL(a.href);
+});
+$("sample").addEventListener("click", () => {
+  $("input").value = `local v1 = game:GetService("Players")
+local v2 = v1.LocalPlayer
+local v3 = v2:WaitForChild("PlayerGui"):WaitForChild("MainGui")
+local v4 = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Buy")
+v2.CharacterAdded:Connect(function(p1)
+	local v5 = p1:WaitForChild("Humanoid")
+	v5.Died:Connect(function()
+		v3.Enabled = false
+	end)
+end)
+for v6, v7 in pairs(v3:GetChildren()) do
+	if v7:IsA("TextButton") then
+		v7.MouseButton1Click:Connect(function()
+			v4:FireServer(v7.Name)
+		end)
+	end
+end`;
+});
+init();
+</script>
+</body>
+</html>

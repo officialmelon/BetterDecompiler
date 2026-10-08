@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to (re)publish, e.g. v2.0.0
+        description: Version to publish, e.g. v2.0.0 (the tag is created on the selected branch if it doesn't exist)
         required: true
 
 permissions:
@@ -19,8 +19,6 @@ jobs:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ env.TAG }}
       - uses: actions/setup-go@v6
         with:
           # Current Go: older toolchains produce macOS binaries that new macOS refuses to load.
@@ -47,5 +45,5 @@ jobs:
             gh release upload "$TAG" dist/*.zip dist/*.tar.gz dist/betterdecompiler.lua dist/SHA256SUMS.txt --clobber
           else
             gh release create "$TAG" dist/*.zip dist/*.tar.gz dist/betterdecompiler.lua dist/SHA256SUMS.txt \
-              --title "BetterDecompiler $TAG" --notes-file notes.md --latest
+              --title "BetterDecompiler $TAG" --notes-file notes.md --latest --target "$GITHUB_SHA"
           fi

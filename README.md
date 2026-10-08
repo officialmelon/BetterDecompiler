@@ -244,7 +244,8 @@ scripts/e2e.sh                            # real server + mock AI provider + Lua
 The tests don't need an API key. `internal/mockllm` emulates the OpenAI, Anthropic and Gemini APIs, including errors,
 rate limits, refusals and truncated output. The renamer is also checked by **executing** programs before and after
 hundreds of randomized rename sets under Lua 5.1 and the official Luau VM (set `LUAU_BIN` to enable the Luau run).
-Releases are built by GitHub Actions when a `v*` tag is pushed.
+Releases are built and published by GitHub Actions when a `v*` tag is pushed, when a commit titled `Release vX.Y.Z`
+is pushed, or from Actions → Release → Run workflow. Add the version's notes to `CHANGELOG.md` first.
 
 ## Project layout
 

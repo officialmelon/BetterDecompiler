@@ -1,0 +1,73 @@
+name: Release
+
+# Publishes a GitHub release with binaries for every platform. Start it by:
+#   - pushing a tag:                     git tag v2.0.1 && git push origin v2.0.1
+#   - pushing a commit titled:           "Release v2.0.1"   (no tag push needed)
+#   - running it from the Actions tab:   Release -> Run workflow (enter the version)
+# In the last two cases the tag is created on the commit being released.
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["**"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version to publish, e.g. v2.0.1
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref_type == 'tag' ||
+      startsWith(github.event.head_commit.message, 'Release v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then tag="$INPUT_TAG"
+          elif [ "$REF_TYPE" = tag ]; then tag="$REF_NAME"
+          else tag="$(printf '%s\n' "$COMMIT_MSG" | head -n1 | awk '{print $2}')"; fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "::error::'$tag' is not a version like v2.0.1"; exit 1
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          # Current Go: older toolchains produce macOS binaries that new macOS refuses to load.
+          go-version: stable
+      - name: Test
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Build all platforms
+        run: scripts/build.sh "$TAG"
+      - name: Release notes
+        run: |
+          awk -v tag="$TAG" '
+            $0 ~ "^## \\[" tag "\\]" {on=1; next}
+            on && /^## \[/ {exit}
+            on {print}
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md" > notes.md
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.zip dist/*.tar.gz dist/betterdecompiler.lua dist/SHA256SUMS.txt --clobber
+          else
+            gh release create "$TAG" dist/*.zip dist/*.tar.gz dist/betterdecompiler.lua dist/SHA256SUMS.txt \
+              --title "BetterDecompiler $TAG" --notes-file notes.md --latest --target "$GITHUB_SHA"
+          fi

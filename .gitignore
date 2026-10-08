@@ -1,0 +1,7 @@
+/dist/
+/betterdecompiler
+/betterdecompiler.exe
+/mockllm
+*.test
+*.out
+.DS_Store

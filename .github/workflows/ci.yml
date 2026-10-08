@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          # Current Go: older toolchains produce macOS binaries that new macOS refuses to load.
+          go-version: stable
+      - run: go vet ./...
+      - run: go test -race ./...
+        if: runner.os != 'Windows'
+      - run: go test ./...
+        if: runner.os == 'Windows'
+
+  integration:
+    name: Lua, Luau and end-to-end tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          # Current Go: older toolchains produce macOS binaries that new macOS refuses to load.
+          go-version: stable
+      - name: Install Lua 5.1 and the official Luau toolchain
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1
+          curl -sSL -o /tmp/luau.zip https://github.com/luau-lang/luau/releases/latest/download/luau-ubuntu.zip
+          mkdir -p "$HOME/luau" && unzip -q /tmp/luau.zip -d "$HOME/luau"
+          echo "$HOME/luau" >> "$GITHUB_PATH"
+      - name: Rename safety checked by executing code (Lua 5.1 + Luau VM)
+        run: go test ./internal/luau -run 'Execution' -v
+      - name: Client compiles as Luau
+        run: luau-compile --null client/betterdecompiler.lua
+      - name: Client unit tests
+        run: lua5.1 client/tests/run.lua
+      - name: End-to-end (server + mock AI provider + Lua client)
+        run: scripts/e2e.sh
+      - name: Cross-compile every release target
+        run: scripts/build.sh ci
